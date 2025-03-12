@@ -5,19 +5,9 @@ import numpy as np
 from model import Classifier
 import config
 
-# todo: make the binary images (for model training and here for segmentation)
-# use 1 for foreground and 0 for background instead of current way
-
-# todo: classify all chars at once?
-
+# todo: fix scaling
 # todo: tune the model and actually get decent accuracy
-
-# todo: create a config file for segmentation parameters and use them here
-
-# todo: tune the text extraction algorithm to be more robust
-
-# todo: look into ML approaches where if doesn't match any class, it's ignored
-
+# todo: upload to GitHub
 
 class Character:
     """
@@ -60,6 +50,30 @@ class Character:
         }
         return mapping.get(val, '')
 
+    @staticmethod
+    def scale_char_image(img):
+        """
+        Resize the character image to be optimal for classification.
+        """
+        # todo: handle this better to more accurately preserve aspect ratio of the character
+        # todo: pad with zeros on the shortest side to make it square, then resize
+
+        diff = abs(img.shape[0] - img.shape[1])
+        if img.shape[0] > img.shape[1]:  # Taller than wide
+            pad_left = diff // 2
+            pad_right = diff - pad_left
+            img = np.pad(img, ((0, 0), (pad_left, pad_right)), mode='constant')
+        elif img.shape[1] > img.shape[0]:  # Wider than tall
+            pad_top = diff // 2
+            pad_bottom = diff - pad_top
+            img = np.pad(img, ((pad_top, pad_bottom), (0, 0)), mode='constant')
+
+        w, h = config.model_input_size
+        result = np.zeros(config.model_input_size, dtype=np.uint8)
+        resized = cv.resize(img, (w - 4, h - 4))
+        result[2:h - 2, 2:w - 2] = resized
+        return result
+
     def __str__(self):
         return f'Character {self.classification} at {self.centroid}'
 
@@ -98,22 +112,10 @@ def find_words(characters):
     words = extract_text(characters)
     return [''.join([char.classification for char in word]) for word in words]
 
-def scale_char_image(img):
-    """
-    Resize the character image to be optimal for classification.
-    """
-    # todo: handle this better to more accurately preserve aspect ratio of the character
-    # todo: morphological operations to clean up the image?
-    # todo: pad with zeros on the shortest side to make it square, then resize
-    w, h = config.model_input_size
-    h_padding = w // 10
-    v_padding = h // 10
-    resized = cv.resize(img, (w - 2 * h_padding, h - 2 * v_padding))
-    result = np.zeros(config.model_input_size, dtype=np.uint8)
-    result[v_padding:config.model_input_size[1] - v_padding, h_padding:config.model_input_size[0] - h_padding] = resized
-    return result
-
 def classify_characters(characters, model):
+    """
+    Classify each of the finalized characters.
+    """
     final = []
     for char in sorted(characters, key=lambda x: (x.centroid[0], x.centroid[1])):
         char.classify(model)
@@ -179,7 +181,7 @@ def filter_characters(labels, stats, centroids):
             window = np.zeros((h, w), dtype=np.uint8)
             window[labels[y:y+h, x:x+w] == i] = 1
             characters.append(Character((int(centroids[i][0]), int(centroids[i][1])), x, y, w, h,
-                                        scale_char_image(window)))
+                                        Character.scale_char_image(window)))
     Character.median_width = np.median([char.width for char in characters])
     return characters
 
