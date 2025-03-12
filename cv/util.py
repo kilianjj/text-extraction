@@ -1,13 +1,12 @@
-
+"""
+Utility functions for processing images and characters.
+Includes functions for extracting characters, classifying characters, and finding words in an image.
+"""
 
 import cv2 as cv
 import numpy as np
 from model import Classifier
 import config
-
-# todo: fix scaling
-# todo: tune the model and actually get decent accuracy
-# todo: upload to GitHub
 
 class Character:
     """
@@ -21,6 +20,8 @@ class Character:
         """
         Initialize a character with a location, size, image, and classification that empty by default.
         :param centroid: centroid of the character in original image
+        :param x: min x coordinate of the character in original image
+        :param y: min y coordinate of the character in original image
         :param w: width in original image
         :param h:  height in original image
         :param scaled_img: the normalized image of the character
@@ -43,21 +44,25 @@ class Character:
 
     @staticmethod
     def map_classification(val):
-        mapping = {
-            0: 'a', 1: 'b', 2: 'c', 3: 'd', 4: 'e', 5: 'f', 6: 'g', 7: 'h', 8: 'i', 9: 'j',
-            10: 'k', 11: 'l', 12: 'm', 13: 'n', 14: 'o', 15: 'p', 16: 'q', 17: 'r', 18: 's',
-            19: 't', 20: 'u', 21: 'v', 22: 'w', 23: 'x', 24: 'y', 25: 'z'
+        # convert by-class index to character
+        emnist__mapping = {
+            0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9',
+            10: 'A', 11: 'B', 12: 'C', 13: 'D', 14: 'E', 15: 'F', 16: 'G', 17: 'H', 18: 'I', 19: 'J',
+            20: 'K', 21: 'L', 22: 'M', 23: 'N', 24: 'O', 25: 'P', 26: 'Q', 27: 'R', 28: 'S', 29: 'T',
+            30: 'U', 31: 'V', 32: 'W', 33: 'X', 34: 'Y', 35: 'Z',
+            36: 'a', 37: 'b', 38: 'c', 39: 'd', 40: 'e', 41: 'f', 42: 'g', 43: 'h', 44: 'i', 45: 'j',
+            46: 'k', 47: 'l', 48: 'm', 49: 'n', 50: 'o', 51: 'p', 52: 'q', 53: 'r', 54: 's', 55: 't',
+            56: 'u', 57: 'v', 58: 'w', 59: 'x', 60: 'y', 61: 'z'
         }
-        return mapping.get(val, '')
+        return emnist__mapping.get(val, '')
 
     @staticmethod
     def scale_char_image(img):
         """
         Resize the character image to be optimal for classification.
         """
-        # todo: handle this better to more accurately preserve aspect ratio of the character
-        # todo: pad with zeros on the shortest side to make it square, then resize
 
+        # pad the image to make it square while keeping original aspect ratio
         diff = abs(img.shape[0] - img.shape[1])
         if img.shape[0] > img.shape[1]:  # Taller than wide
             pad_left = diff // 2
@@ -68,10 +73,15 @@ class Character:
             pad_bottom = diff - pad_top
             img = np.pad(img, ((pad_top, pad_bottom), (0, 0)), mode='constant')
 
+        # scale and center
         w, h = config.model_input_size
         result = np.zeros(config.model_input_size, dtype=np.uint8)
         resized = cv.resize(img, (w - 4, h - 4))
         result[2:h - 2, 2:w - 2] = resized
+
+        # rotate and flip to match training data orientation
+        result = cv.rotate(result, cv.ROTATE_90_CLOCKWISE)
+        result = cv.flip(result, 1)
         return result
 
     def __str__(self):
@@ -123,18 +133,16 @@ def classify_characters(characters, model):
             final.append(char)
     return final
 
-def get_characters(img, model_path):
+def get_characters(img):
     """
     Convert image to binary, segment into characters, filter out non-characters, classify characters.
-    :param img: input image
-    :param model_path: path to the trained model
-    :return: list of character objects including classification
+    Return list of character objects including their classifications.
     """
     binary = convert_to_binary(img)
     n_labels, labels, stats, centroids = segment_image(binary)
     characters = filter_characters(labels, stats, centroids)
     model = Classifier()
-    model.load_model(model_path)
+    model.load_model()
     final_chars = classify_characters(characters, model)
     return final_chars
 
@@ -190,6 +198,6 @@ def bounding_boxes(img, characters):
     Draw bounding boxes around the characters in the image.
     """
     for char in characters:
-        x, y = char.centroid
-        w, h = char.width // 2, char.height // 2
-        cv.rectangle(img, (x - w, y - h), (x + w, y + h), (0, 255, 0), 1)
+        x, y = char.x, char.y
+        w, h = char.width, char.height
+        cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
