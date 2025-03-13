@@ -1,5 +1,6 @@
 """
-Test on several images.
+Author: Kilian Jakstis
+Run text extraction on several demo images.
 """
 
 import util
@@ -22,13 +23,14 @@ def main(img_path):
     cv.imwrite(f'{im_name}_output.png', img)
 
 if __name__ == '__main__':
-    main("img1.png")
-    main("img2.png")
-    main("img3.png")
-    main("img4.png")
-    main("img5.png")
+    main("images/img1.png")
+    main("images/img2.png")
+    main("images/img3.png")
+    main("images/img4.png")
+    main("images/img5.png")
     # main("img6.png")
-    main("img7.png")
-    main("img8.png")
-    main("img9.png")
-    main("img10.png")
+    main("images/img7.png")
+    main("images/img8.png")
+    main("images/img9.png")
+    main("images/img10.png")
+    main("images/img11.png")

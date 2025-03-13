@@ -40,7 +40,8 @@ class Classifier:
 
     def predict(self, img):
         img = torch.tensor(np.array([img]), dtype=torch.float32).unsqueeze(0)
-        if max(img) > 1:
-            img /= 255
+        # if np.max(img) > 1:
+        #     img /= 255
+        img /= 255
         img = (img - 0.5) / 0.5
         return self.model(img).argmax().item()
