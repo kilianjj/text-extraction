@@ -15,6 +15,7 @@ class Character:
 
     empty = ""
     median_width = 0
+    median_height = 0
 
     def __init__(self, centroid, x, y, w, h, scaled_img, classification=empty):
         """
@@ -62,6 +63,7 @@ class Character:
         Resize the character image to be optimal for classification.
         """
 
+        # method one:
         # pad the image to make it square while keeping original aspect ratio
         diff = abs(img.shape[0] - img.shape[1])
         if img.shape[0] > img.shape[1]:  # Taller than wide
@@ -82,6 +84,13 @@ class Character:
         # rotate and flip to match training data orientation
         result = cv.rotate(result, cv.ROTATE_90_CLOCKWISE)
         result = cv.flip(result, 1)
+
+        # method two:
+        # w, h = config.model_input_size
+        # result = np.zeros(config.model_input_size, dtype=np.uint8)
+        # resized = cv.resize(img, (w - 4, h - 4))
+        # result[2:h - 2, 2:w - 2] = resized
+
         return result
 
     def __str__(self):
@@ -91,28 +100,85 @@ class Character:
         """
         Check if the character is next to the previous one (ordered from top left to bottom right).
         """
-        first_end = other.centroid[0] + other.width // 2
-        second_start = self.centroid[0] - self.width // 2
+        first_end = other.x + other.width
+        second_start = self.x
         # see if the x distance between them is less than half the median width of chapters
         return abs(first_end - second_start) < config.median_width_scalar * Character.median_width
 
-def extract_text(characters):
+def clean_text(text):
     """
-    Identify words in the image by grouping contiguous characters together.
-    Use relative centroid location to determine if characters are part of the same word.
+    Try to get rid of simple mistakes like having a 1 instead of an 'I' in a word with simple rules.
+    """
+    new = ''
+    for i in range(len(text)):
+        if i == len(text) - 1:
+            if text[i] == '1':
+                new += 'I' if text[i - 1].isalpha() else '1'
+                continue
+            if text[i] == '0':
+                new += 'O' if text[i - 1].isalpha() else '0'
+                continue
+            new += text[i]
+            continue
+        if i == 0:
+            if text[i] == '1':
+                new += 'I' if text[i + 1].isalpha() else '1'
+                continue
+            if text[i] == '0':
+                new += 'O' if text[i + 1].isalpha() else '0'
+                continue
+            new += text[i]
+            continue
+
+        if text[i] == '1' or text[i] == '0':
+            if i == 0:
+                new += 'I' if text[i + 1].isalpha() else 'O'
+            if text[i - 1].isalpha() or text[i + 1].isalpha():
+                new += 'I' if text[i] == '1' else 'O'
+        else:
+            new += text[i]
+    return new
+
+def extract_words(line):
+    """
+    Get letters that are horizontally close and in the same line to form words.
     """
     words = []
     current_word = []
-    for i, char in enumerate(characters):
+    x_sorted = sorted(line, key=lambda x: x.centroid[0])
+    for i, char in enumerate(x_sorted):
         if i == 0:
             current_word.append(char)
             continue
-        if char.is_contiguous(characters[i - 1]):
+        if char.is_contiguous(x_sorted[i - 1]):
             current_word.append(char)
         else:
             words.append(current_word)
             current_word = [char]
     words.append(current_word)
+    return words
+
+def extract_text(characters):
+    """
+    Identify lines by grouping characters that are vertically close.
+    Then do a similar process to group characters that are horizontally close to form words
+    for each line.
+    """
+    words = []
+    line_height = config.median_height_scalar * Character.median_width
+    y_sorted = sorted(characters, key=lambda x: x.centroid[1])
+
+    current_line = []
+    for i, char in enumerate(y_sorted):
+        if i == 0:
+            current_line.append(char)
+            continue
+        if char.y - current_line[-1].y < line_height:
+            current_line.append(char)
+        else:
+            words.extend(extract_words(current_line))
+            current_line = [char]
+    words.extend(extract_words(current_line))
     return words
 
 def find_words(characters):
@@ -127,7 +193,7 @@ def classify_characters(characters, model):
     Classify each of the finalized characters.
     """
     final = []
-    for char in sorted(characters, key=lambda x: (x.centroid[0], x.centroid[1])):
+    for char in characters:
         char.classify(model)
         if char.classification != Character.empty:
             final.append(char)
@@ -139,8 +205,8 @@ def get_characters(img):
     Return list of character objects including their classifications.
     """
     binary = convert_to_binary(img)
-    n_labels, labels, stats, centroids = segment_image(binary)
-    characters = filter_characters(labels, stats, centroids)
+    n_labels, stats, centroids = segment_image(binary)
+    characters = filter_characters(img, stats, centroids)
     model = Classifier()
     model.load_model()
     final_chars = classify_characters(characters, model)
@@ -167,13 +233,13 @@ def segment_image(img):
         img = cv.bitwise_not(img)
     opened = cv.morphologyEx(img, cv.MORPH_OPEN, np.ones(config.morph_kernel_size, np.uint8))
     n_labels, labels, stats, centroids = cv.connectedComponentsWithStats(opened, connectivity=config.connectivity)
-    return n_labels, labels, stats, centroids
+    return n_labels, stats, centroids
 
-def filter_characters(labels, stats, centroids):
+def filter_characters(image, stats, centroids):
     """
     Filter out characters that are too small or too large relative to the average object size.
     Also, extract the image of each character and initialize a character object.
-    :param labels: list of object labels
+    :param image: original image
     :param stats: list of stats for each object
     :param centroids: list of centroids for each object
     :return: list of character objects
@@ -185,12 +251,21 @@ def filter_characters(labels, stats, centroids):
         # skip the background
         x, y, w, h, area = stats[i]
         if 64 < area < avg_area * 2:
-            # extract the char window
-            window = np.zeros((h, w), dtype=np.uint8)
-            window[labels[y:y+h, x:x+w] == i] = 1
+            # for grayscale image:
+            char_image = image[y:y + h, x:x + w]
+            char_image = cv.cvtColor(char_image, cv.COLOR_BGR2GRAY)
+            char_image = cv.bitwise_not(char_image)
             characters.append(Character((int(centroids[i][0]), int(centroids[i][1])), x, y, w, h,
-                                        Character.scale_char_image(window)))
+                                        Character.scale_char_image(char_image)))
+            # for binary image:
+            # extract the char window
+            # window = np.zeros((h, w), dtype=np.uint8)
+            # window[labels[y:y+h, x:x+w] == i] = 1
+            # characters.append(Character((int(centroids[i][0]), int(centroids[i][1])), x, y, w, h,
+            #                             Character.scale_char_image(window)))
+
     Character.median_width = np.median([char.width for char in characters])
+    Character.median_height = np.median([char.height for char in characters])
     return characters
 
 def bounding_boxes(img, characters):
